@@ -15,9 +15,15 @@ static struct class * cl;
 
 char ibuf[BUF_SIZE];
 char rbuf[BUF_SIZE];
+int rbuf_off = 0;
 
+// 0 -> OK; 1 -> END of Buffer; 2 -> Div by zero; 3 -> Invalid op;
 int calculate(int a, int b, char operation){
-	int answer;
+	int answer = 0;
+	if(rbuf_off > BUF_SIZE - 3){
+		printk(KERN_ERR "UNLUCK HAPPENED!!!! BUFFER IS FULL!\n");
+		return 1;
+	}
 	switch(operation){
 		case '+':
 			answer = a + b;
@@ -31,16 +37,22 @@ int calculate(int a, int b, char operation){
 		case '/':
 			if (b==0){
 				printk(KERN_ERR "Division by Zero");
-				return -EINVAL;
+				return 2;
 			}
 			answer = a / b;
 			break;
 		default:
 			printk(KERN_ERR "Invalid operation!");
-			return answer;
+			return 3;
 	}
 
-	return answer;
+	rbuf[rbuf_off] = answer + '0';
+	rbuf_off++;
+	rbuf[rbuf_off] = ' ';
+	rbuf_off++;
+	rbuf[rbuf_off] = '\0';
+	printk(KERN_ERR "OFFSET IS %d\n", rbuf_off);
+	return 0;
 }
 
 static int my_open(struct inode *i, struct file *f)
@@ -58,14 +70,49 @@ static int my_close(struct inode *i, struct file *f)
 static ssize_t my_read(struct file *f, char __user *buf, size_t len, loff_t *off)
 {
 
-  int count = strlen(ibuf);
+  int count = strlen(rbuf);
   printk(KERN_INFO "Driver: read()\n");
+
+  int a;
+  int b;
+  char op;
+  if(sscanf(ibuf, "%d%c%d", &a, &op, &b) !=3){
+        printk(KERN_ERR "Invalid format from input!");
+        return -EINVAL;
+  }
+
+  retry:
+  int state_res = calculate(a, b, op);
+
+  switch(state_res){
+	case 0:
+		break;
+	case 1:
+		int i = 0;
+		while(i < BUF_SIZE){
+			rbuf[i] = '\0';
+			i++;
+		}
+		rbuf_off = 0;
+		goto retry;
+	case 2:
+		return -EINVAL;
+	case 3:
+		return -EINVAL;
+  }
+
+  printk(KERN_INFO "Buf is  %s\n", rbuf);
+  printk(KERN_INFO "Buf Size is %d\n", rbuf_off);
+
+
+  //int count = strlen(rbuf);
+  //printk(KERN_INFO "Driver: read()\n");
 
   if (*off > 0 || len < count) {
       return 0;
   }
 
-  if (copy_to_user(buf, ibuf, count) != 0) {
+  if (copy_to_user(buf, rbuf, count) != 0) {
       return -EFAULT;
   }
 
@@ -84,18 +131,6 @@ static ssize_t my_write(struct file *f, const char __user *buf,  size_t len, lof
   if (copy_from_user(ibuf, buf, len) != 0) {
       return -EFAULT;
   }
-  int a;
-  int b;
-  char op;
-  if(sscanf(ibuf, "%d%c%d", &a, &op, &b) !=3){
-	printk(KERN_ERR "Invalid format from input!");
-	return -EINVAL;
- }
-
-  int result = calculate(a, b, op);
-  snprintf(ibuf, BUF_SIZE, "Result is %d\n", result);
-  printk(KERN_INFO "Hello, My name is %d\n", result);
-
 
   return len;
 }
@@ -122,7 +157,7 @@ static int __init ch_drv_init(void)
 		return -1;
 	  }
 
-      if (device_create(cl, NULL, first, NULL, "mychdev") == NULL)
+      if (device_create(cl, NULL, first, NULL, "var2") == NULL)
       {
           class_destroy(cl);
           unregister_chrdev_region(first, 1);
